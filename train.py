@@ -251,4 +251,3 @@ if __name__ == '__main__':
     
     print('Saving K-FOLD predictions:', args.output)
     np.savez(args.output, y_hat=predictions, y=targets, keep=keep)
-    

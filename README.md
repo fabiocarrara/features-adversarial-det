@@ -15,3 +15,14 @@ This code trains a model for adversarial detection based on intermediate feature
  ```shell
  python train.py data/dissim.npz > log.txt
  ```
+ 
+### Compare to MTAP article
+
+ - Run training on MTAP data:
+ ```shell
+ python train.py --data-selection mtap -o predictions.npz data/dissim.npz > log.txt
+ ```
+ - Run analysis:
+ ```shell
+ python plot.py predictions.npz
+ ```
