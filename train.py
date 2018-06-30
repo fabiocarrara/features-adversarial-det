@@ -73,7 +73,8 @@ def mtap_data(X, y):
     keep[0:1000] = y[0:1000] == 1  # adversarial, keep only successful (y = 1)
     keep[1000:2000] = y[1000:2000] == 0  # authentic, do not keep errors (y = 1)
     keep[2000:3000] = y[2000:3000] == 0  # random_noise, keep only the ones remained authentic
-    keep[3000:4000] = y[3000:4000] == 1  # adversarial, keep only successful (y = 1)
+    # keep[3000:4000] = y[3000:4000] == 1  # adversarial, keep only successful (y = 1)
+    keep[3000:4000] = 0 # do not keep step_target_fgsm, the same as fgsm
     keep[4000:5000] = y[4000:5000] == 1  # adversarial, keep only successful (y = 1)
 
     X = X[:, keep, :]

@@ -71,6 +71,12 @@ if __name__ == '__main__':
     accs = kept.groupby('group').apply(lambda x: '{:3.2%}'.format(metrics.accuracy_score(x['eer_pred'], x['modified'])))
     print(accs)
     
+    # pivot = kept[['modified', 'type', 'eer_pred']]
+    pivot = pd.pivot_table(kept, values='pred', index=['modified', 'type'], columns=['eer_pred'], aggfunc='count')
+    pivot.columns = ['Authenthic', 'Advesarial']
+    pivot['Total'] = pivot['Authenthic'] + pivot['Advesarial']
+    print(pivot)
+    
     colors = np.array(('r', 'b'))
     
     n_samples = len(y)
