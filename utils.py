@@ -2,9 +2,11 @@ import os
 from random import getrandbits
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset
+from torch.utils.data.dataset import random_split, Subset
 from torchvision.datasets.folder import default_loader, IMG_EXTENSIONS
 
+import numpy as np
 import tensorflow as tf
 
 
@@ -12,12 +14,43 @@ def is_image_file(filename):
     return any(filename.lower().endswith(extension) for extension in IMG_EXTENSIONS)
 
 
+class NpzDataset(Dataset):
+    def __init__(self, folder, transform=None, return_paths=False, return_label=None):
+        self.folder = folder
+        self.files = [i for i in os.listdir(folder) if i.endswith('.npz')]
+        self.transform = transform
+        self.return_paths = return_paths
+        self.return_label = return_label
+
+    def __getitem__(self, item):
+        path = self.files[item]
+        abspath = os.path.join(self.folder, path)
+        image = torch.from_numpy(np.load(abspath)['img'])
+        if self.transform:
+            image = self.transform(image)
+
+        if self.return_paths:
+            ret = [path, image]
+            if self.return_label is not None:
+                ret.append(self.return_label)
+            return ret
+
+        if self.return_label is not None:
+            return image, self.return_label
+
+        return image
+
+    def __len__(self):
+        return len(self.files)
+
+
 class ImageDataset(Dataset):
-    def __init__(self, folder, transform=None, return_paths=False):
+    def __init__(self, folder, transform=None, return_paths=False, return_label=None):
         self.folder = folder
         self.images = [i for i in os.listdir(folder) if is_image_file(i)]
         self.transform = transform
         self.return_paths = return_paths
+        self.return_label = return_label
 
     def __getitem__(self, item):
         path = self.images[item]
@@ -27,11 +60,42 @@ class ImageDataset(Dataset):
             image = self.transform(image)
 
         if self.return_paths:
-            return path, image
+            ret = [path, image]
+            if self.return_label is not None:
+                ret.append(self.return_label)
+            return ret
+
+        if self.return_label is not None:
+            return image, self.return_label
+
         return image
 
     def __len__(self):
         return len(self.images)
+
+
+class AdvDataset(Dataset):
+
+    def __init__(self, orig_folders, adv_folders, orig_transform=None, adv_transform=None, return_paths=False):
+        adv_datasets = [NpzDataset(f, transform=adv_transform, return_paths=return_paths, return_label=1) for f in adv_folders]
+        adv_subset = ConcatDataset(adv_datasets)
+
+        orig_datasets = [ImageDataset(f, transform=orig_transform, return_paths=return_paths, return_label=0) for f in orig_folders]
+        orig_subset = ConcatDataset(orig_datasets)
+        orig_idx = torch.randperm(len(orig_subset))[:len(adv_subset)]
+        orig_subset = Subset(orig_subset, orig_idx)
+
+        n_orig = len(orig_subset)
+        n_adv = len(adv_subset)
+        print('Orig / Adv: {} ({:3.2%}) / {} ({:3.2%})'.format(n_orig, (n_orig / (n_orig + n_adv)), n_adv, (n_adv / (n_orig + n_adv))))
+
+        self.combined = ConcatDataset([orig_subset, adv_subset])
+
+    def __getitem__(self, item):
+        return self.combined[item]
+
+    def __len__(self):
+        return len(self.combined)
 
 
 # https://gist.github.com/kingspp/3ec7d9958c13b94310c1a365759aa3f4

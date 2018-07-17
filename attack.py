@@ -48,10 +48,11 @@ def main(args):
         classes = [i.rstrip() for i in f.readlines()]
         classes.sort()
 
+    normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     transform = Compose([Resize(256),
                          CenterCrop(224),
                          ToTensor(),
-                         Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                         normalize
                          ])
 
     dataset = ImageDataset(args.image_folder, transform=transform, return_paths=True)
@@ -67,12 +68,16 @@ def main(args):
     tf_model = convert_pytorch_model_to_tf(model, args.device)
     cleverhans_model = CallableModelWrapper(tf_model, output_layer='logits')
 
+    # compute clip_min and clip_max suing a full black and a full white image
+    clip_min = normalize(torch.zeros(3, 1, 1)).min().item()
+    clip_max = normalize(torch.ones(3, 1, 1)).max().item()
+
     eps = args.eps / 255.
     eps_iter = 20
     nb_iter = 10
-    args.ord = np.inf if args.ord is None else args.ord
+    args.ord = np.inf if args.ord < 0 else args.ord
     grad_params = {'eps': eps, 'ord': args.ord}
-    common_params = {'clip_min': 0., 'clip_max': 1.}
+    common_params = {'clip_min': clip_min, 'clip_max': clip_max}
     iter_params = {'eps_iter': eps_iter / 255., 'nb_iter': nb_iter}
 
     attack_name = ''
@@ -151,11 +156,10 @@ if __name__ == '__main__':
                         default=20,
                         help='Number of attacks to run simultaneously')
     parser.add_argument('-e', '--eps', type=int, default=20, help='Maximum perturbation (in range [0, 255])')
-    parser.add_argument('-l', '--ord', type=int, choices=(1, 2), default=None,
+    parser.add_argument('-l', '--ord', type=int, choices=(-1, 1, 2), default=-1,
                         help='Norm order for perturbation (default: inf)')
     args = parser.parse_args()
 
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(args.device)
     # args.device = 'cpu'
     main(args)
