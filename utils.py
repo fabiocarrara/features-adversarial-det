@@ -98,6 +98,24 @@ class AdvDataset(Dataset):
         return len(self.combined)
 
 
+# Global var for idx -> class mapping
+classes = None
+
+
+def _load_classes():
+    global classes
+    if classes is None:
+        with open('ilsvrc12_synset_to_human_label_map.txt', 'r') as f:
+            classes = [i.rstrip() for i in f.readlines()]
+            classes.sort()
+        classes.append('Adversarial example')
+
+
+def idx2desc(idx):
+    _load_classes()
+    return classes[idx]
+
+
 # https://gist.github.com/kingspp/3ec7d9958c13b94310c1a365759aa3f4
 # Pyfunc Gradient Function
 def _py_func_with_gradient(func, inp, Tout, stateful=True, name=None,
