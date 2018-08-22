@@ -15,9 +15,6 @@ from tqdm import tqdm
 
 from utils import ImageDataset, convert_pytorch_model_to_tf
 
-# Global var for idx -> class mapping
-classes = []
-
 
 def imshow(inp, title=None):
     """Imshow for Tensor."""
@@ -32,18 +29,7 @@ def imshow(inp, title=None):
     plt.pause(0.001)
 
 
-def p2l(pred):
-    idx = np.argmax(pred, axis=1)
-    return '\n'.join('{}: {}'.format(i, classes[i]) for i in idx)
-
-
 def main(args):
-    # Load classes mapping once
-    global classes
-    with open('ilsvrc12_synset_to_human_label_map.txt', 'r') as f:
-        classes = [i.rstrip() for i in f.readlines()]
-        classes.sort()
-
     normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     transform = Compose([Resize(256),
                          CenterCrop(224),
@@ -145,10 +131,6 @@ def main(args):
             path = '{}_{}_src{}_dst{}.npz'.format(p, attack_name, s, d)
             path = os.path.join(args.out_folder, path)
             np.savez_compressed(path, img=a)
-
-        # print(p2l(z))
-        # print('-----')
-        # print(p2l(adv_z))
 
 
 if __name__ == '__main__':
