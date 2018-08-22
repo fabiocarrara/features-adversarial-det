@@ -1,18 +1,98 @@
+import argparse
 import os
+from collections import Counter
 from random import getrandbits
 
+import glob2
+import numpy as np
+import pandas as pd
+import tensorflow as tf
 import torch
 from torch.utils.data import Dataset, ConcatDataset
-from torch.utils.data.dataset import random_split, Subset
 from torchvision.datasets.folder import default_loader, IMG_EXTENSIONS
-
-import numpy as np
-import tensorflow as tf
 
 
 def is_image_file(filename):
     return any(filename.lower().endswith(extension) for extension in IMG_EXTENSIONS)
 
+
+def get_attack(path):
+    if not path.endswith('.npz'):
+        return 'auth'
+    return os.path.basename(path).split('_')[1]
+    
+
+class OrigAdvDataset(Dataset):
+    def __init__(self, paths, adv_transform=None, orig_transform=None, return_paths=False, return_label=True):
+        self.paths = paths
+        self.labels = [1 if i.endswith('.npz') else 0 for i in self.paths]
+        self.attacks = [get_attack(i) for i in self.paths]
+        self.adv_transform = adv_transform
+        self.orig_transform = orig_transform
+        self.return_paths = return_paths
+        self.return_label = return_label
+        
+        a_counts = Counter(self.attacks)
+        
+        ntotal = len(self.paths)
+        nadv = sum(self.labels)
+        norig = ntotal - nadv
+        
+        self.weights = [(ntotal / a_counts[a]) for a in self.attacks]
+        
+    def __len__(self):
+        return len(self.paths)
+        
+    def __getitem__(self, item):
+        path = self.paths[item]
+        label = self.labels[item]
+        
+        if label:  # adversarial
+            image = torch.from_numpy(np.load(path)['img'])
+            if self.adv_transform:
+                image = self.adv_transform(image)
+        else:
+            image = default_loader(path)
+            if self.orig_transform:
+                image = self.orig_transform(image)        
+
+        # path, image, label
+        ret = [None, image, None]
+
+        if self.return_paths:
+            ret[0] = path
+            
+        if self.return_label:
+            ret[2] = label
+        
+        ret = [r for r in ret if r is not None]
+        ret = ret[0] if len(ret) == 1 else ret
+        
+        return ret
+        
+
+def split_adversarials(csv_filename):
+    adv = pd.read_csv(csv_filename)
+    ids = adv.ID.unique()
+    
+    adv['Split'] = adv.ID.map(lambda x: 'train' if x in ids[:700] else 'val' if x in ids[700:800] else 'test')    
+    
+    train = adv[adv['Split'] == 'train']
+    val = adv[adv['Split'] == 'val']
+    test = adv[adv['Split'] == 'test']
+
+    print('TRAIN: {}'.format(len(train)))
+    print('VAL  : {}'.format(len(val)))
+    print('TEST : {}'.format(len(test)))
+    
+    # print(adv.pivot_table(index=['Attack','Eps'], columns='Split', values='ID', aggfunc='count'))
+    
+    train_files = train.Path.tolist() + train.OriginalPath.unique().tolist()
+    val_files = val.Path.tolist() + val.OriginalPath.unique().tolist()
+    test_files = test.Path.tolist() + test.OriginalPath.unique().tolist()
+    
+    return train_files, val_files, test_files
+    
 
 class NpzDataset(Dataset):
     def __init__(self, folder, transform=None, return_paths=False, return_label=None):
@@ -77,19 +157,23 @@ class ImageDataset(Dataset):
 class AdvDataset(Dataset):
 
     def __init__(self, orig_folders, adv_folders, orig_transform=None, adv_transform=None, return_paths=False):
-        adv_datasets = [NpzDataset(f, transform=adv_transform, return_paths=return_paths, return_label=1) for f in adv_folders]
+        adv_datasets = [NpzDataset(f, transform=adv_transform, return_paths=return_paths, return_label=1) for f in
+                        adv_folders]
         adv_subset = ConcatDataset(adv_datasets)
 
-        orig_datasets = [ImageDataset(f, transform=orig_transform, return_paths=return_paths, return_label=0) for f in orig_folders]
+        orig_datasets = [ImageDataset(f, transform=orig_transform, return_paths=return_paths, return_label=0) for f in
+                         orig_folders]
         orig_subset = ConcatDataset(orig_datasets)
-        orig_idx = torch.randperm(len(orig_subset))[:len(adv_subset)]
-        orig_subset = Subset(orig_subset, orig_idx)
+        # orig_idx = torch.randperm(len(orig_subset))[:len(adv_subset)]
+        # orig_subset = Subset(orig_subset, orig_idx)
 
         n_orig = len(orig_subset)
         n_adv = len(adv_subset)
-        print('Orig / Adv: {} ({:3.2%}) / {} ({:3.2%})'.format(n_orig, (n_orig / (n_orig + n_adv)), n_adv, (n_adv / (n_orig + n_adv))))
+        n_total = n_orig + n_adv
+        print('Orig / Adv: {} ({:3.2%}) / {} ({:3.2%})'.format(n_orig, (n_orig / n_total), n_adv, (n_adv / n_total)))
 
         self.combined = ConcatDataset([orig_subset, adv_subset])
+        self.weights = (n_total / n_orig,) * n_orig + (n_total / n_adv,) * n_adv
 
     def __getitem__(self, item):
         return self.combined[item]
@@ -162,14 +246,13 @@ def convert_pytorch_model_to_tf(model, device, out_dims=None):
 
     def _fprop_fn(x_np):
         x_tensor = torch.tensor(x_np, requires_grad=True)
-                
+
         torch_state['x'] = x_tensor
         torch_state['logits'] = model(x_tensor.to(device))
         return torch_state['logits'].cpu().detach().numpy()
 
     def _bprop_fn(x_np, grads_in_np):
         _fprop_fn(x_np)
-
         grads_in_tensor = torch.tensor(grads_in_np).to(device)
 
         # Run our backprop through our logits to our xs
@@ -189,3 +272,45 @@ def convert_pytorch_model_to_tf(model, device, out_dims=None):
         return out
 
     return tf_model_fn
+    
+    
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Summarize Experimens')
+    parser.add_argument('run_dir', default='runs/', help='Folder containing runs')
+    args = parser.parse_args()
+    
+    logs = glob2.glob(os.path.join(args.run_dir, '**', 'log.csv'))
+    runs = map(os.path.dirname, logs)
+    
+    results = []
+    for run in runs:
+        log = os.path.join(run, 'log.csv')
+        log = pd.read_csv(log)
+        idxmax = log.auc.idxmax()
+        best = log.iloc[idxmax]
+        
+        params = os.path.join(run, 'params.csv')
+        params = pd.read_csv(params)        
+        params['auc'] = best.auc
+        params['eer'] = best.eer_accuracy
+        params['macro_auc'] = best.macro_auc
+        
+        results.append(params)
+    
+    results = pd.concat(results, axis=0)
+    # conds = (~results.bidir) & (results.epochs == 250) & (results.seed == 23) & ~results.mlp
+    # results = results[conds]
+    
+    unique_cols = results.apply(pd.Series.nunique) == 1
+    non_unique_cols = ~unique_cols
+    
+    with pd.option_context('display.width', None, 'max_columns', None):
+        # Print differences
+        # print(results.loc[:, non_unique_cols].sort_values('auc', ascending=False))
+
+        print(results.loc[:, non_unique_cols].pivot_table(index=['hidden', 'mlp', 'bidir'], columns=['centroids', 'distance'], values='auc'))
+
+        # Print common
+        print(results.loc[:, unique_cols].iloc[0])
+
+        # print(results.pivot_table(index=['mlp', 'centroids', 'distance'], columns='macro_auc'))
