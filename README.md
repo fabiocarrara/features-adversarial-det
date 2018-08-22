@@ -1,4 +1,4 @@
-## Adversarial Detection in Dissimilarity Space
+## Adversarial examples detection in features distance spaces
 
 This repo contains code to reproduce the experiments presented in "Adversarial examples detection in features distance spaces".
 The code trains models for adversarial detection based on intermediate features of the attacked classifier embedded into dissimilarity spaces.
